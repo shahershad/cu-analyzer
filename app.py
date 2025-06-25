@@ -1,7 +1,4 @@
 import streamlit as st
-import tempfile
-import os
-from pathlib import Path
 from bs4 import BeautifulSoup
 from reportlab.lib.pagesizes import A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, PageBreak, Table, TableStyle, Spacer
@@ -11,32 +8,32 @@ from reportlab.lib import colors
 from reportlab.lib.enums import TA_JUSTIFY
 from collections import Counter
 import re
+from io import BytesIO
 import base64
 
-# === Keyword lists ===
+# === Keyword Lists ===
 green_keywords = [kw.lower() for kw in [
-    "emissions reduction", "low carbon", "pollution control", "waste minimization", "clean energy",
-    "environmental footprint", "resource conservation", "ecosystem restoration", "biodiversity", "habitat preservation",
-    "land rehabilitation", "sustainable agriculture", "reforestation", "conservation practices", "energy efficiency",
-    "water efficiency", "sustainable materials", "circular economy", "recycling", "green manufacturing", "eco-design",
-    "climate resilience", "greenhouse gas mitigation", "carbon neutrality", "climate adaptation", "renewable energy",
-    "low-emission technologies", "disaster risk reduction", "environmental standards", "green certification", "esg",
-    "sustainable policy", "green regulations", "environmental compliance", "strategic environmental planning"
+    "Emissions reduction", "Low carbon", "Pollution control", "Waste minimization", "Clean energy",
+    "Environmental footprint", "Resource conservation", "Ecosystem restoration", "Biodiversity", "Habitat preservation",
+    "Land rehabilitation", "Sustainable agriculture", "Reforestation", "Conservation practices", "Energy efficiency",
+    "Water efficiency", "Sustainable materials", "Circular economy", "Recycling", "Green manufacturing", "Eco-design",
+    "Climate resilience", "Greenhouse gas mitigation", "Carbon neutrality", "Climate adaptation", "Renewable energy",
+    "Low-emission technologies", "Disaster risk reduction", "Environmental standards", "Green certification", "ESG",
+    "Sustainable policy", "Green regulations", "Environmental compliance", "Strategic environmental planning"
 ]]
 
 ir_keywords = [kw.lower() for kw in [
-    "artificial intelligence", "internet of things", "3d printing", "big data analytics", "cloud computing", "smart technology",
-    "digital twin", "horizontal integration", "vertical integration", "cyber-physical systems", "autonomous systems",
-    "self-adapting systems", "interconnected networks", "digital ecosystems", "cybersecurity", "communication technology",
-    "data management", "augmented reality", "virtual reality", "simulation systems", "advanced materials", "digital literacy",
-    "talent retention", "reskilling and upskilling", "human-machine collaboration", "stem education", "knowledge workers",
-    "future workforce", "policy framework", "innovation incentives", "sme inclusion", "strategic oversight",
-    "regulatory compliance", "multi-stakeholder collaboration", "digital economy strategy", "robotics", "smart factories",
-    "automation", "industry 4.0 machines", "predictive maintenance", "flexible manufacturing systems", "engineering design",
-    "r&d intensity", "prototyping", "innovative materials", "product lifecycle innovation", "iot infrastructure",
-    "smart logistics", "digital supply chains", "cloud integration", "intelligent monitoring", "waste reduction",
-    "resource optimization", "technical skills", "industrial training", "competency-based learning", "technological adaptability",
-    "job transformation"
+    "Artificial Intelligence (AI)", "Internet of Things (IoT)", "Additive Manufacturing (3D Printing)", "Big Data Analytics",
+    "Cloud Computing", "Smart Technology", "Digital Twin", "Horizontal Integration", "Vertical Integration", "Cyber-Physical Systems",
+    "Autonomous Systems", "Self-adapting Systems", "Interconnected Networks", "Digital Ecosystems", "Cybersecurity", "Communication Technology",
+    "Data Management", "Augmented Reality (AR)", "Virtual Reality (VR)", "Simulation Systems", "Advanced Materials", "Digital Literacy",
+    "Talent Retention", "Reskilling and Upskilling", "Human-Machine Collaboration", "STEM Education", "Knowledge Workers", "Future Workforce",
+    "Policy Framework", "Innovation Incentives", "SME Inclusion", "Strategic Oversight", "Regulatory Compliance", "Multi-stakeholder Collaboration",
+    "Digital Economy Strategy", "Robotics", "Smart Factories", "Automation", "Industry 4.0 Machines", "Predictive Maintenance",
+    "Flexible Manufacturing Systems", "Engineering Design", "R&D Intensity", "Prototyping", "Innovative Materials", "Product Lifecycle Innovation",
+    "IoT Infrastructure", "Smart Logistics", "Digital Supply Chains", "Cloud Integration", "Intelligent Monitoring", "Energy Efficiency",
+    "Waste Reduction", "Circular Economy", "Resource Optimization", "Technical Skills", "Industrial Training", "Competency-Based Learning",
+    "Technological Adaptability", "Job Transformation"
 ]]
 
 weights = {
@@ -70,17 +67,15 @@ def label(name):
         "CU TITLE": "CU TITLE",
         "CU DESCRIPTOR": "CU<br/>DESCRIPTOR",
         "WORK ACTIVITY": "WORK<br/>ACTIVITIES",
-        "PERFORMANCE CRITERIA": "PERFORMANCE<br/>CRITERIA",
-        "TOTAL MATCH (%)": "TOTAL<br/>MATCH (%)"
+        "PERFORMANCE CRITERIA": "PERFORMANCE<br/>CRITERIA"
     }
     return Paragraph(label_map.get(name, name), wrap_style)
 
-def process_html_to_pdf(html_content, output_path):
+def process_html_to_pdf(html_content):
     soup = BeautifulSoup(html_content, "html.parser")
     tables = soup.find_all("table", class_="table")
     profile_data, cu_blocks = {}, []
     current_cu, current_was, current_pcs = {}, [], []
-
     file_gt_keywords = Counter()
     file_ir_keywords = Counter()
 
@@ -120,20 +115,20 @@ def process_html_to_pdf(html_content, output_path):
             "PERFORMANCE CRITERIA": " - ".join(current_pcs),
         })
 
-    flowables = []
-    flowables.append(Paragraph("<b>NOSS PROFILE</b>", styleH))
-    flowables.append(Spacer(1, 0.3 * cm))
-    for label_text in ["SECTION", "GROUP", "AREA", "NOSS CODE", "NOSS TITLE", "NOSS LEVEL"]:
-        flowables.append(Paragraph(f"<b>{label_text}:</b> {profile_data.get(label_text, '')}", styleN))
-    flowables.append(PageBreak())
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=2*cm, leftMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
+    flowables = [Paragraph("<b>NOSS PROFILE</b>", styleH), Spacer(1, 0.3 * cm)]
 
+    for k in ["SECTION", "GROUP", "AREA", "NOSS CODE", "NOSS TITLE", "NOSS LEVEL"]:
+        flowables.append(Paragraph(f"<b>{k}:</b> {profile_data.get(k, '')}", styleN))
+
+    flowables.append(PageBreak())
     summary_data = [["CU", "Green Technology", "Industrial Revolution"]]
 
     for i, cu in enumerate(cu_blocks, 1):
         gt_scores, ir_scores = {}, {}
         for k in weights:
             cu_text = cu.get(k, "").lower()
-
             for kw in green_keywords:
                 count = cu_text.count(kw)
                 if count > 0:
@@ -142,13 +137,11 @@ def process_html_to_pdf(html_content, output_path):
                 count = cu_text.count(kw)
                 if count > 0:
                     file_ir_keywords[kw] += count
-
             gt_scores[k] = weights[k] if any(kw in cu_text for kw in green_keywords) else 0
             ir_scores[k] = weights[k] if any(kw in cu_text for kw in ir_keywords) else 0
 
         total_gt = sum(gt_scores.values())
         total_ir = sum(ir_scores.values())
-
         summary_data.append([
             f"CU #{i}",
             f"✅ {total_gt}%" if total_gt > 0 else "❌ 0%",
@@ -157,102 +150,61 @@ def process_html_to_pdf(html_content, output_path):
 
         cu_title = highlight_keywords(cu.get("CU TITLE", ""), green_keywords, ir_keywords)
         cu_desc = highlight_keywords(cu.get("CU DESCRIPTOR", ""), green_keywords, ir_keywords)
-        cu_wa = highlight_keywords(cu.get("WORK ACTIVITY", ""), green_keywords, ir_keywords)
-        cu_pc = highlight_keywords(cu.get("PERFORMANCE CRITERIA", ""), green_keywords, ir_keywords)
 
         flowables.append(Paragraph(f"<b>CU #{i}</b>", styleH))
         flowables.append(Spacer(1, 0.2 * cm))
-
-        table_top = Table([
+        flowables.append(Table([
             [label("CU CODE"), Paragraph(cu.get("CU CODE", ""), wrap_style), "", ""],
             [label("CU TITLE"), Paragraph(cu_title, wrap_style), f"{gt_scores['CU TITLE']}%", f"{ir_scores['CU TITLE']}%"],
             [label("CU DESCRIPTOR"), Paragraph(cu_desc, wrap_style), f"{gt_scores['CU DESCRIPTOR']}%", f"{ir_scores['CU DESCRIPTOR']}%"]
-        ], colWidths=[3.5 * cm, 11 * cm, 1.25 * cm, 1.25 * cm])
-        table_top.setStyle(TableStyle([
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('INNERGRID', (0, 0), (-1, -1), 0.3, colors.grey),
-            ('BOX', (0, 0), (-1, -1), 0.6, colors.black),
-        ]))
-        flowables.append(table_top)
+        ], colWidths=[3.5 * cm, 11 * cm, 1.25 * cm, 1.25 * cm]))
 
-        # Work Activities Table
-        wa_data = []
-        for j, item in enumerate(cu_wa.split(" - ")):
-            wa_data.append([
-                label("WORK ACTIVITY") if j == 0 else "",
-                Paragraph(f"• {item.strip()}", wrap_style),
-                f"{gt_scores['WORK ACTIVITY']}%" if j == 0 else "",
-                f"{ir_scores['WORK ACTIVITY']}%" if j == 0 else ""
-            ])
-        table_wa = Table(wa_data, colWidths=[3.5 * cm, 11 * cm, 1.25 * cm, 1.25 * cm])
-        table_wa.setStyle(TableStyle([
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('INNERGRID', (0, 0), (-1, -1), 0.3, colors.grey),
-            ('BOX', (0, 0), (-1, -1), 0.6, colors.black),
-        ]))
-        flowables.append(table_wa)
-
-        # Performance Criteria Table
-        pc_data = []
-        for j, item in enumerate(cu_pc.split(" - ")):
-            pc_data.append([
-                label("PERFORMANCE CRITERIA") if j == 0 else "",
-                Paragraph(f"• {item.strip()}", wrap_style),
-                f"{gt_scores['PERFORMANCE CRITERIA']}%" if j == 0 else "",
-                f"{ir_scores['PERFORMANCE CRITERIA']}%" if j == 0 else ""
-            ])
-        table_pc = Table(pc_data, colWidths=[3.5 * cm, 11 * cm, 1.25 * cm, 1.25 * cm])
-        table_pc.setStyle(TableStyle([
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('INNERGRID', (0, 0), (-1, -1), 0.3, colors.grey),
-            ('BOX', (0, 0), (-1, -1), 0.6, colors.black),
-        ]))
-        flowables.append(table_pc)
         flowables.append(PageBreak())
 
     flowables.append(Paragraph("<b>Summary of CU Matching</b>", styleH))
-    flowables.append(Spacer(1, 0.3 * cm))
-    summary_table = Table(summary_data, colWidths=[4 * cm, 6 * cm, 6 * cm])
-    summary_table.setStyle(TableStyle([
-        ('GRID', (0, 0), (-1, -1), 0.6, colors.black),
-        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-        ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    table = Table(summary_data, colWidths=[4*cm, 6*cm, 6*cm])
+    table.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+        ('ALIGN', (1,1), (-1,-1), 'CENTER'),
     ]))
-    flowables.append(summary_table)
+    flowables.append(table)
 
     flowables.append(PageBreak())
     flowables.append(Paragraph("<b>Matched Green Technology Keywords</b>", styleH))
-    for kw, count in sorted(file_gt_keywords.items(), key=lambda x: (-x[1], x[0])):
-        flowables.append(Paragraph(f"• {kw} ({count})", styleN))
+    if file_gt_keywords:
+        for kw, count in sorted(file_gt_keywords.items(), key=lambda x: -x[1]):
+            flowables.append(Paragraph(f"• {kw} ({count})", styleN))
+    else:
+        flowables.append(Paragraph("No matches found.", styleN))
 
-    flowables.append(Spacer(1, 0.3 * cm))
+    flowables.append(Spacer(1, 0.3*cm))
     flowables.append(Paragraph("<b>Matched Industrial Revolution Keywords</b>", styleH))
-    for kw, count in sorted(file_ir_keywords.items(), key=lambda x: (-x[1], x[0])):
-        flowables.append(Paragraph(f"• {kw} ({count})", styleN))
+    if file_ir_keywords:
+        for kw, count in sorted(file_ir_keywords.items(), key=lambda x: -x[1]):
+            flowables.append(Paragraph(f"• {kw} ({count})", styleN))
+    else:
+        flowables.append(Paragraph("No matches found.", styleN))
 
-    doc = SimpleDocTemplate(output_path, pagesize=A4, rightMargin=2*cm, leftMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
     doc.build(flowables)
-    return output_path
+    buffer.seek(0)
+    return buffer
 
 # === Streamlit UI ===
-st.set_page_config(page_title="CU Analyzer", layout="wide")
-st.title("📄 CU Keyword Analyzer & PDF Generator")
-st.markdown("Upload your `.html` NOSS file to generate a full CU analysis report.")
-
-uploaded_file = st.file_uploader("Upload NOSS HTML file", type=["html"])
+st.set_page_config(page_title="NOSS CU Analyzer", layout="centered")
+st.title("🔍 NOSS CU Analyzer")
+uploaded_file = st.file_uploader("Upload your HTML file", type="html")
 
 if uploaded_file:
-    filename = Path(uploaded_file.name).stem
-    html_text = uploaded_file.read().decode("utf-8")
-    output_path = os.path.join(tempfile.gettempdir(), f"{filename}.pdf")
-    process_html_to_pdf(html_text, output_path)
+    with st.spinner("Analyzing... generating PDF..."):
+        html_content = uploaded_file.read().decode("utf-8")
+        pdf_buffer = process_html_to_pdf(html_content)
+        base64_pdf = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
 
-    st.success(f"✅ PDF generated as: {filename}.pdf")
+        st.markdown("### 🔽 Download Result")
+        st.download_button("📄 Download PDF", data=pdf_buffer, file_name=uploaded_file.name.replace(".html", ".pdf"))
 
-    with open(output_path, "rb") as f:
-        st.download_button("📥 Download PDF", f, file_name=f"{filename}.pdf", mime="application/pdf")
-
-    with open(output_path, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode("utf-8")
-        st.markdown(f'<iframe src="data:application/pdf;base64,{b64}" width="100%" height="1000"></iframe>', unsafe_allow_html=True)
+        st.markdown("### 🔍 Preview")
+        st.components.v1.html(f'''
+            <iframe width="100%" height="600" src="data:application/pdf;base64,{base64_pdf}" type="application/pdf" frameborder="0"></iframe>
+        ''', height=600)

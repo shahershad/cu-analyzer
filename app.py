@@ -13,7 +13,7 @@ from collections import Counter
 import re
 import base64
 
-# === Keyword lists ===
+# === Keyword Lists ===
 green_keywords = [kw.lower() for kw in [
     "emissions reduction", "low carbon", "pollution control", "waste minimization", "clean energy",
     "environmental footprint", "resource conservation", "ecosystem restoration", "biodiversity", "habitat preservation",
@@ -51,15 +51,30 @@ styleN = styles['Normal']
 styleH = styles['Heading2']
 wrap_style = ParagraphStyle(name='WrapStyle', parent=styleN, alignment=TA_JUSTIFY, spaceAfter=6)
 
+def highlight(text, gt_keywords, ir_keywords):
+    def replacer(match):
+        word = match.group(0)
+        lw = word.lower()
+        if lw in gt_keywords:
+            return f"<mark style='background-color:#ccffcc'>{word}</mark>"
+        elif lw in ir_keywords:
+            return f"<mark style='background-color:#ffff99'>{word}</mark>"
+        return word
+
+    all_keywords = sorted(set(gt_keywords + ir_keywords), key=len, reverse=True)
+    pattern = re.compile(r'\b(' + '|'.join(re.escape(k) for k in all_keywords) + r')\b', re.IGNORECASE)
+    return pattern.sub(replacer, text)
+
+
 def highlight_keywords(text, gt_keywords, ir_keywords):
     all_keywords = sorted(set(gt_keywords + ir_keywords), key=len, reverse=True)
     def replacer(match):
         word = match.group(0)
         lw = word.lower()
         if lw in gt_keywords:
-            return f'<font backcolor="yellow">{word}</font>'
-        elif lw in ir_keywords:
             return f'<font backcolor="#ccffcc">{word}</font>'
+        elif lw in ir_keywords:
+            return f'<font backcolor="#ffff99">{word}</font>'
         return word
     pattern = re.compile('|'.join(re.escape(k) for k in all_keywords), re.IGNORECASE)
     return pattern.sub(replacer, text)
@@ -121,39 +136,52 @@ def process_html_to_pdf(html_content, output_path):
         })
 
     flowables = []
+
+    # === NOSS Profile ===
     flowables.append(Paragraph("<b>NOSS PROFILE</b>", styleH))
     flowables.append(Spacer(1, 0.3 * cm))
     for label_text in ["SECTION", "GROUP", "AREA", "NOSS CODE", "NOSS TITLE", "NOSS LEVEL"]:
         flowables.append(Paragraph(f"<b>{label_text}:</b> {profile_data.get(label_text, '')}", styleN))
     flowables.append(PageBreak())
 
-    summary_data = [["CU", "Green Technology", "Industrial Revolution"]]
+    # === Summary Table ===
+    flowables.append(Paragraph("<b>Summary of CU Keyword Match Scores</b>", styleH))
+    summary_data = [[
+        Paragraph("<b>CU CODE</b>", wrap_style),
+        Paragraph("<b>CU TITLE</b>", wrap_style),
+        Paragraph("<b>GT Total (%)</b>", wrap_style),
+        Paragraph("<b>IR Total (%)</b>", wrap_style)
+    ]]
+    for cu in cu_blocks:
+        gt_total = sum(weights[k] if any(kw in cu.get(k, "").lower() for kw in green_keywords) else 0 for k in weights)
+        ir_total = sum(weights[k] if any(kw in cu.get(k, "").lower() for kw in ir_keywords) else 0 for k in weights)
+        summary_data.append([
+            Paragraph(cu.get("CU CODE", ""), wrap_style),
+            Paragraph(cu.get("CU TITLE", ""), wrap_style),
+            f"{gt_total}%",
+            f"{ir_total}%"
+        ])
+    summary_table = Table(summary_data, colWidths=[3.5 * cm, 8.5 * cm, 2.5 * cm, 2.5 * cm])
+    summary_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('INNERGRID', (0, 0), (-1, -1), 0.3, colors.grey),
+        ('BOX', (0, 0), (-1, -1), 0.6, colors.black),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey)
+    ]))
+    flowables.append(summary_table)
+    flowables.append(PageBreak())
 
+    # === CU Details ===
     for i, cu in enumerate(cu_blocks, 1):
         gt_scores, ir_scores = {}, {}
         for k in weights:
             cu_text = cu.get(k, "").lower()
-
-            for kw in green_keywords:
-                count = cu_text.count(kw)
-                if count > 0:
-                    file_gt_keywords[kw] += count
-            for kw in ir_keywords:
-                count = cu_text.count(kw)
-                if count > 0:
-                    file_ir_keywords[kw] += count
-
             gt_scores[k] = weights[k] if any(kw in cu_text for kw in green_keywords) else 0
             ir_scores[k] = weights[k] if any(kw in cu_text for kw in ir_keywords) else 0
-
-        total_gt = sum(gt_scores.values())
-        total_ir = sum(ir_scores.values())
-
-        summary_data.append([
-            f"CU #{i}",
-            f"✅ {total_gt}%" if total_gt > 0 else "❌ 0%",
-            f"✅ {total_ir}%" if total_ir > 0 else "❌ 0%"
-        ])
+            for kw in green_keywords:
+                file_gt_keywords[kw] += cu_text.count(kw)
+            for kw in ir_keywords:
+                file_ir_keywords[kw] += cu_text.count(kw)
 
         cu_title = highlight_keywords(cu.get("CU TITLE", ""), green_keywords, ir_keywords)
         cu_desc = highlight_keywords(cu.get("CU DESCRIPTOR", ""), green_keywords, ir_keywords)
@@ -175,7 +203,6 @@ def process_html_to_pdf(html_content, output_path):
         ]))
         flowables.append(table_top)
 
-        # Work Activities Table
         wa_data = []
         for j, item in enumerate(cu_wa.split(" - ")):
             wa_data.append([
@@ -192,7 +219,6 @@ def process_html_to_pdf(html_content, output_path):
         ]))
         flowables.append(table_wa)
 
-        # Performance Criteria Table
         pc_data = []
         for j, item in enumerate(cu_pc.split(" - ")):
             pc_data.append([
@@ -210,49 +236,182 @@ def process_html_to_pdf(html_content, output_path):
         flowables.append(table_pc)
         flowables.append(PageBreak())
 
-    flowables.append(Paragraph("<b>Summary of CU Matching</b>", styleH))
-    flowables.append(Spacer(1, 0.3 * cm))
-    summary_table = Table(summary_data, colWidths=[4 * cm, 6 * cm, 6 * cm])
-    summary_table.setStyle(TableStyle([
-        ('GRID', (0, 0), (-1, -1), 0.6, colors.black),
-        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-        ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-    ]))
-    flowables.append(summary_table)
+    # === Keyword Summary ===
+    matched_gt = {kw: count for kw, count in file_gt_keywords.items() if count > 0}
+    matched_ir = {kw: count for kw, count in file_ir_keywords.items() if count > 0}
 
-    flowables.append(PageBreak())
-    flowables.append(Paragraph("<b>Matched Green Technology Keywords</b>", styleH))
-    for kw, count in sorted(file_gt_keywords.items(), key=lambda x: (-x[1], x[0])):
-        flowables.append(Paragraph(f"• {kw} ({count})", styleN))
+    if matched_gt:
+        flowables.append(Paragraph("<b>Matched Green Technology Keywords</b>", styleH))
+        for kw, count in sorted(matched_gt.items(), key=lambda x: (-x[1], x[0])):
+            flowables.append(Paragraph(f"• {kw} ({count})", styleN))
+        flowables.append(Spacer(1, 0.3 * cm))
 
-    flowables.append(Spacer(1, 0.3 * cm))
-    flowables.append(Paragraph("<b>Matched Industrial Revolution Keywords</b>", styleH))
-    for kw, count in sorted(file_ir_keywords.items(), key=lambda x: (-x[1], x[0])):
-        flowables.append(Paragraph(f"• {kw} ({count})", styleN))
+    if matched_ir:
+        flowables.append(Paragraph("<b>Matched Industrial Revolution Keywords</b>", styleH))
+        for kw, count in sorted(matched_ir.items(), key=lambda x: (-x[1], x[0])):
+            flowables.append(Paragraph(f"• {kw} ({count})", styleN))
 
     doc = SimpleDocTemplate(output_path, pagesize=A4, rightMargin=2*cm, leftMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
     doc.build(flowables)
     return output_path
 
+def process_html_and_display_web(html_content):
+    soup = BeautifulSoup(html_content, "html.parser")
+    tables = soup.find_all("table", class_="table")
+    profile_data, cu_blocks = {}, []
+    current_cu, current_was, current_pcs = {}, [], []
+
+    file_gt_keywords = Counter()
+    file_ir_keywords = Counter()
+
+    # === Extract Profile Table ===
+    profile_table = soup.find("table", class_="table")
+    if profile_table:
+        for row in profile_table.find_all("tr"):
+            cells = row.find_all("td")
+            if len(cells) == 2:
+                profile_data[cells[0].get_text(strip=True)] = cells[1].get_text(" ", strip=True)
+
+    # === Extract CU Blocks ===
+    for table in tables:
+        if "CU CODE" in table.text and "CU TITLE" in table.text:
+            if current_cu:
+                cu_blocks.append({
+                    **current_cu,
+                    "WORK ACTIVITY": " - ".join(current_was),
+                    "PERFORMANCE CRITERIA": " - ".join(current_pcs),
+                })
+                current_was, current_pcs = [], []
+            for row in table.find_all("tr"):
+                cells = row.find_all("td")
+                if len(cells) == 2:
+                    key = cells[0].get_text(strip=True)
+                    val = cells[1].get_text(" ", strip=True)
+                    if key in ["CU CODE", "CU TITLE", "CU DESCRIPTOR"]:
+                        current_cu[key] = val
+        elif "WORK ACTIVITIES" in table.text and "PERFORMANCE CRITERIA" in table.text:
+            for row in table.find_all("tr")[1:]:
+                cells = row.find_all("td")
+                if len(cells) == 2:
+                    current_was.append(cells[0].get_text(" ", strip=True))
+                    current_pcs.append(cells[1].get_text(" ", strip=True))
+    if current_cu:
+        cu_blocks.append({
+            **current_cu,
+            "WORK ACTIVITY": " - ".join(current_was),
+            "PERFORMANCE CRITERIA": " - ".join(current_pcs),
+        })
+
+    # === Display NOSS Profile ===
+    st.subheader("NOSS Profile")
+    for field in ["SECTION", "GROUP", "AREA", "NOSS CODE", "NOSS TITLE", "NOSS LEVEL"]:
+        st.markdown(f"**{field}**: {profile_data.get(field, '')}")
+
+    st.markdown("---")
+
+    # === CU Summary Table ===
+    st.subheader("Summary of CU Keyword Match Scores")
+
+    summary_table_html = """<table style='width:100%; border:1px solid #ccc; border-collapse:collapse; font-size:14px;'>
+    <thead>
+        <tr style='background-color:#f0f0f0'>
+            <th style='border:1px solid #ccc; padding:8px;'>CU CODE</th>
+            <th style='border:1px solid #ccc; padding:8px;'>CU TITLE</th>
+            <th style='border:1px solid #ccc; padding:8px;'>GT Total (%)</th>
+            <th style='border:1px solid #ccc; padding:8px;'>IR Total (%)</th>
+        </tr>
+    </thead>
+    <tbody>
+"""
+
+    for cu in cu_blocks:
+        gt_total = sum(weights[k] if any(kw in cu.get(k, "").lower() for kw in green_keywords) else 0 for k in weights)
+        ir_total = sum(weights[k] if any(kw in cu.get(k, "").lower() for kw in ir_keywords) else 0 for k in weights)
+
+        summary_table_html += f"""<tr>
+            <td style='border:1px solid #ccc; padding:8px;'>{cu.get("CU CODE", "")}</td>
+            <td style='border:1px solid #ccc; padding:8px;'>{highlight(cu.get("CU TITLE", ""), green_keywords, ir_keywords)}</td>
+            <td style='border:1px solid #ccc; padding:8px; text-align:center;'>{gt_total}%</td>
+            <td style='border:1px solid #ccc; padding:8px; text-align:center;'>{ir_total}%</td>
+        </tr>
+"""
+
+    summary_table_html += "</tbody></table><br>"
+    st.markdown(summary_table_html, unsafe_allow_html=True)
+
+    # === CU Details ===
+    st.subheader("Detailed CU Content")
+    for i, cu in enumerate(cu_blocks, 1):
+        st.markdown(f"### CU #{i}")
+        gt_scores = {}
+        ir_scores = {}
+
+        for k in weights:
+            text = cu.get(k, "").lower()
+            gt_scores[k] = weights[k] if any(kw in text for kw in green_keywords) else 0
+            ir_scores[k] = weights[k] if any(kw in text for kw in ir_keywords) else 0
+            for kw in green_keywords:
+                file_gt_keywords[kw] += text.count(kw)
+            for kw in ir_keywords:
+                file_ir_keywords[kw] += text.count(kw)
+
+        table_html = f"""
+        <table style='width:100%; border:1px solid #ccc; border-collapse:collapse;'>
+        <tr style='background:#eee'>
+            <th>Element</th><th>Content</th><th>GT (%)</th><th>IR (%)</th>
+        </tr>
+        <tr><td><b>CU CODE</b></td><td>{cu.get("CU CODE", "")}</td><td></td><td></td></tr>
+        <tr><td><b>CU TITLE</b></td><td>{highlight(cu.get("CU TITLE", ""), green_keywords, ir_keywords)}</td><td>{gt_scores["CU TITLE"]}%</td><td>{ir_scores["CU TITLE"]}%</td></tr>
+        <tr><td><b>CU DESCRIPTOR</b></td><td>{highlight(cu.get("CU DESCRIPTOR", ""), green_keywords, ir_keywords)}</td><td>{gt_scores["CU DESCRIPTOR"]}%</td><td>{ir_scores["CU DESCRIPTOR"]}%</td></tr>
+        <tr>
+            <td><b>WORK ACTIVITIES</b></td>
+            <td>{'<br>'.join(['• ' + highlight(x.strip(), green_keywords, ir_keywords) for x in cu.get("WORK ACTIVITY", "").split(" - ") if x.strip()])}</td>
+            <td>{gt_scores["WORK ACTIVITY"]}%</td>
+            <td>{ir_scores["WORK ACTIVITY"]}%</td>
+        </tr>
+        <tr>
+            <td><b>PERFORMANCE CRITERIA</b></td>
+            <td>{'<br>'.join(['• ' + highlight(x.strip(), green_keywords, ir_keywords) for x in cu.get("PERFORMANCE CRITERIA", "").split(" - ") if x.strip()])}</td>
+            <td>{gt_scores["PERFORMANCE CRITERIA"]}%</td>
+            <td>{ir_scores["PERFORMANCE CRITERIA"]}%</td>
+        </tr>
+        </table><br>
+        """
+        st.markdown(table_html, unsafe_allow_html=True)
+
+    # === Conditional Keyword Summary ===
+    matched_gt = {kw: count for kw, count in file_gt_keywords.items() if count > 0}
+    if matched_gt:
+        st.subheader("Matched Green Technology Keywords")
+        for kw, count in sorted(matched_gt.items(), key=lambda x: (-x[1], x[0])):
+            st.markdown(f"- **{kw}** ({count})")
+
+    matched_ir = {kw: count for kw, count in file_ir_keywords.items() if count > 0}
+    if matched_ir:
+        st.subheader("Matched Industrial Revolution Keywords")
+        for kw, count in sorted(matched_ir.items(), key=lambda x: (-x[1], x[0])):
+            st.markdown(f"- **{kw}** ({count})")
+
+
+
 # === Streamlit UI ===
 st.set_page_config(page_title="CU Analyzer", layout="wide")
-st.title("📄 CU Keyword Analyzer & PDF Generator")
-st.markdown("Upload your `.html` NOSS file to generate a full CU analysis report.")
+st.title("📄 CU Keyword Analyzer & Report Generator")
+st.markdown("Upload your `.html` NOSS file to view CU analysis and download a structured PDF report.")
 
-uploaded_file = st.file_uploader("Upload NOSS HTML file", type=["html"])
+uploaded_file = st.file_uploader("📂 Upload NOSS HTML File", type=["html"])
 
 if uploaded_file:
+    html_content = uploaded_file.read().decode("utf-8")
     filename = Path(uploaded_file.name).stem
-    html_text = uploaded_file.read().decode("utf-8")
     output_path = os.path.join(tempfile.gettempdir(), f"{filename}.pdf")
-    process_html_to_pdf(html_text, output_path)
-
-    st.success(f"✅ PDF generated as: {filename}.pdf")
-
+    
+    # Generate PDF for download
+    process_html_to_pdf(html_content, output_path)
+    
+    # Show download button at top
     with open(output_path, "rb") as f:
-        st.download_button("📥 Download PDF", f, file_name=f"{filename}.pdf", mime="application/pdf")
+        st.download_button("📥 Download Full PDF Report", f, file_name=f"{filename}.pdf", mime="application/pdf")
 
-    with open(output_path, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode("utf-8")
-        st.markdown(f'<iframe src="data:application/pdf;base64,{b64}" width="100%" height="1000"></iframe>', unsafe_allow_html=True)
+    # Show content on website
+    process_html_and_display_web(html_content)
